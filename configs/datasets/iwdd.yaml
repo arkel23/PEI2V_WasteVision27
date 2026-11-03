@@ -1,0 +1,8 @@
+# IWDD 2027: frames at 5 fps; video-level CSVs (train_val, test, train_f{k}, val_f{k}) and win_* window CSVs
+dataset_name: 'iwdd'
+dataset_root_path: '../../data/iwdd'
+df_train: 'win_train_f0.csv'
+df_trainval: 'win_train_val.csv'
+df_val: 'win_val_f0.csv'
+df_test: 'win_test.csv'
+video: 'frames'

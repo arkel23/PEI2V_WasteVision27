@@ -1,0 +1,3 @@
+defaults:
+    dataset: 'datasets/iwdd.yaml'
+    settings: 'settings/ft.yaml'

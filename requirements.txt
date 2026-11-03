@@ -1,0 +1,18 @@
+# Python 3.10. Run from the repo root with python -m tools.<script>.
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+timm==0.9.12
+safetensors==0.8.0
+huggingface_hub==1.28.0
+einops==0.8.2
+omegaconf==2.3.1
+PyYAML==6.0.3
+wandb==0.28.2
+torchprofile==0.1.0
+pandas==2.3.3
+numpy==2.2.6
+matplotlib==3.10.9
+pillow==12.3.0
+typing_extensions==4.16.0
+scipy==1.15.3
