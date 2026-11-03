@@ -1,5 +1,5 @@
-# Extract IWDD frames (5 fps, short side 256, JPEG) and write FGIR-ViT video CSVs: one row per video and one per window.
-# Usage: python tools/iwdd/prepare_iwdd.py <iwdd_root> (ffmpeg on PATH). Re-running skips extracted videos.
+# extract IWDD frames (5 fps, short side 256) and write the video and window csvs; skips extracted videos
+# usage: python tools/iwdd/prepare_iwdd.py <iwdd_root> (ffmpeg on PATH)
 import os
 import sys
 import json
@@ -12,8 +12,9 @@ import pandas as pd
 
 FPS = 5
 SHORT_SIDE = 256
-WINDOW = 16  # frames per window: 3.2 s at 5 fps
-STRIDE = 5   # 1 s between window starts
+# frames per window (3.2 s) and between window starts (1 s)
+WINDOW = 16
+STRIDE = 5
 FOLDS = 5
 
 root = sys.argv[1]
@@ -24,15 +25,17 @@ def extract(split, video):
     out = os.path.join(root, 'frames', split, video_id)
     if not glob(os.path.join(out, '*.jpg')):
         os.makedirs(out, exist_ok=True)
-        subprocess.run(['ffmpeg', '-loglevel', 'error', '-i', video, '-vf', f'fps={FPS},scale=-2:{SHORT_SIDE}',
-                        '-q:v', '3', os.path.join(out, '%05d.jpg')], check=True)
+        cmd = ['ffmpeg', '-loglevel', 'error', '-i', video, '-vf', f'fps={FPS},scale=-2:{SHORT_SIDE}',
+               '-q:v', '3', os.path.join(out, '%05d.jpg')]
+        subprocess.run(cmd, check=True)
     return video_id, sorted(os.path.relpath(p, root) for p in glob(os.path.join(out, '*.jpg')))
 
 
 def videos(split):
     rows = []
+    video_paths = sorted(glob(os.path.join(root, split, 'videos', '*.mp4')))
     with ThreadPoolExecutor(max_workers=10) as pool:
-        frames = dict(pool.map(lambda v: extract(split, v), sorted(glob(os.path.join(root, split, 'videos', '*.mp4')))))
+        frames = dict(pool.map(lambda v: extract(split, v), video_paths))
     for path in sorted(glob(os.path.join(root, split, 'labels', '*.json'))):
         with open(path) as f:
             label = json.load(f)
@@ -48,7 +51,7 @@ def videos(split):
 
 
 def assign_folds(df):
-    # round-robin within each label x event type x day/night stratum, shuffled with a fixed seed
+    # round-robin per label, event type and time of day
     rng = random.Random(0)
     fold = {}
     for _, group in df.groupby(['class_id', 'event_type', 'time_of_day']):
@@ -59,13 +62,14 @@ def assign_folds(df):
 
 
 def windows(df):
-    # a window of a positive video is labeled dumping when it ends at or after the onset
+    # dumping: ends at or after the onset
     rows = []
     for video in df.to_dict('records'):
         frames = video['dir']
         starts = range(0, max(len(frames) - WINDOW, 0) + 1, STRIDE)
         for start in starts:
-            t_start, t_end = start / FPS, (min(start + WINDOW, len(frames)) - 1) / FPS
+            t_start = start / FPS
+            t_end = (min(start + WINDOW, len(frames)) - 1) / FPS
             dumping = video['class_id'] == 1 and t_end >= video['timestamp']
             rows.append({**video, 'class_id': int(dumping), 'dir': frames[start:start + WINDOW],
                          't_start': t_start, 't_end': t_end})
