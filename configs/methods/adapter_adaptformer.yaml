@@ -1,6 +1,6 @@
 # AdaptFormer: per-block parallel adapters, zero-init up-projection with a scalar
 # scale, no inter-layer downsampler.
-#   --cfg configs/<dataset>_ft_weakaugs.yaml configs/methods/adapter_adaptformer.yaml
+#   --cfg configs/iwdd_ft.yaml configs/methods/adapter_adaptformer.yaml
 freeze_backbone: True
 classifier: 'cls'
 adapter: 'adapter'
