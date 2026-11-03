@@ -7,32 +7,36 @@ from torchvision.transforms import v2
 
 
 class ClipRandAugment(nn.Module):
-    # timm RandAugment on full uint8 frames before the crop, as Frame2Freq; every frame replays the clip's random draw
+    # timm RandAugment before the crop, as Frame2Freq; one random draw per clip
     def __init__(self, config):
         super().__init__()
-        self.config, self.transforms = config, {}
+        self.config = config
+        self.transforms = {}
 
     def forward(self, frames):
         h, w = frames.shape[-2:]
         if (h, w) not in self.transforms:
             from PIL import Image
             from timm.data.auto_augment import rand_augment_transform
-            self.transforms[h, w] = rand_augment_transform(
-                self.config, dict(translate_const=int(min(h, w) * 0.45), interpolation=Image.BICUBIC))
-        state, np_state = random.getstate(), np.random.get_state()
+            hparams = dict(translate_const=int(min(h, w) * 0.45), interpolation=Image.BICUBIC)
+            self.transforms[h, w] = rand_augment_transform(self.config, hparams)
+        state = random.getstate()
+        np_state = np.random.get_state()
         out = []
         for frame in frames:
             random.setstate(state)
             np.random.set_state(np_state)
-            out.append(v2.functional.pil_to_tensor(self.transforms[h, w](v2.functional.to_pil_image(frame))))
+            image = self.transforms[h, w](v2.functional.to_pil_image(frame))
+            out.append(v2.functional.pil_to_tensor(image))
         return torch.stack(out)
 
 
 class VideoTransform(nn.Module):
-    # standard_transform's crops and augmentations on uint8 frames; one random draw per clip
+    # standard_transform on uint8 frames; one random draw per clip
     def __init__(self, args, is_train, mean, std):
         super().__init__()
-        image_size, resize_size = args.image_size, args.resize_size
+        image_size = args.image_size
+        resize_size = args.resize_size
 
         t = []
         if is_train:
@@ -85,5 +89,5 @@ class VideoTransform(nn.Module):
         print(self.transform)
 
     def forward(self, clip):
-        # c t h w uint8 -> c t h w normalized float; frames as the batch axis share every random parameter
+        # frames as the batch axis
         return self.transform(clip.permute(1, 0, 2, 3)).permute(1, 0, 2, 3)

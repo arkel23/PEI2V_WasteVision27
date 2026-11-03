@@ -1,4 +1,3 @@
-"""Config loading: several YAMLs at once, with the command line winning over all of them."""
 import os
 import argparse
 
@@ -7,7 +6,7 @@ from omegaconf import OmegaConf
 
 
 def expand_defaults(path):
-    """One config as a flat dict; its `defaults:` includes merge first, so the file wins."""
+    # defaults first, the file wins
     with open(path) as f:
         cfg = yaml.safe_load(f) or {}
 
@@ -20,7 +19,7 @@ def expand_defaults(path):
 
 
 def load_config_from_yaml(paths):
-    """Merge one or more config files, left to right."""
+    # merged left to right
     if isinstance(paths, str):
         paths = [paths]
 
@@ -31,8 +30,7 @@ def load_config_from_yaml(paths):
 
 
 def explicit_cli_args(parser):
-    """The dests the user actually passed. Re-parsing with every default suppressed is the
-    only way to tell "not given" from "given a value that equals the default"."""
+    # dests given on the command line: re-parse with defaults suppressed
     saved = {a.dest: a.default for a in parser._actions}
     try:
         for action in parser._actions:
@@ -44,7 +42,7 @@ def explicit_cli_args(parser):
 
 
 def adjust_config(parser, args):
-    """Fill args from --cfg, leaving anything given on the command line untouched."""
+    # command line wins over --cfg
     if not args.cfg:
         return args
 

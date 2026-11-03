@@ -15,7 +15,7 @@ from .datasets import train_subset
 
 
 def split_csv(args, split):
-    # same split rule as DatasetImgTarget
+    # as DatasetImgTarget
     if split == 'train':
         return args.df_trainval if args.train_trainval else args.df_train
     if split == 'val':
@@ -23,9 +23,9 @@ def split_csv(args, split):
     return args.df_test
 
 
-# each returns n_frames indices into a clip of length t; short clips repeat their last frame
+# frame indices: short clips repeat their last frame
 def uniform_indices(t, n_frames):
-    # same indices as pytorchvideo's uniform_temporal_subsample
+    # as pytorchvideo's uniform_temporal_subsample
     return torch.linspace(0, t - 1, n_frames).long().tolist()
 
 
@@ -44,11 +44,12 @@ def stride_indices(t, n_frames, stride):
 
 
 def segment_indices(t, n_frames, jitter):
-    # one frame per equal segment: random within it when training (jitter), its centre otherwise
+    # one frame per segment: random when training, the center otherwise
     edges = np.linspace(0, t, n_frames + 1)
     if jitter:
         return [random.randint(int(a), max(int(a), int(np.ceil(b)) - 1)) for a, b in zip(edges[:-1], edges[1:])]
-    return np.minimum(((edges[:-1] + edges[1:]) / 2).astype(int), t - 1).tolist()
+    centers = ((edges[:-1] + edges[1:]) / 2).astype(int)
+    return np.minimum(centers, t - 1).tolist()
 
 
 def pad_last(indices, n_frames):
@@ -87,7 +88,6 @@ class DatasetVideoTarget(data.Dataset):
         self.num_classes = len(np.unique(self.targets))
 
     def load_clip(self, idx):
-        # c t h w, uint8
         paths = self.data[idx]
         frames = []
         for i in self.frame_indices(len(paths)):
@@ -123,6 +123,7 @@ class DatasetMP4VideoTarget(DatasetVideoTarget):
         decord.bridge.set_bridge('torch')
 
         reader = decord.VideoReader(os.path.join(self.root, 'rgb', f'{self.data[idx][0]}.mp4'))
-        start, t = self.start_frame[idx], self.end_frame[idx] - self.start_frame[idx] + 1
+        start = self.start_frame[idx]
+        t = self.end_frame[idx] - self.start_frame[idx] + 1
         frames = reader.get_batch([start + i for i in self.frame_indices(t)])
         return rearrange(frames, 't h w c -> c t h w')

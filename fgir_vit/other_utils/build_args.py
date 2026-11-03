@@ -138,7 +138,7 @@ def add_data_args(parser):
     parser.add_argument('--df_test', type=str, default='test.csv',
                         help='the df csv with img_dirs, targets, root/test.csv')
     parser.add_argument('--train_subset', type=float, default=None,
-                        help='train on part of each class: a fraction if below 1 (0.05 = 5%%), else a number of samples')
+                        help='part of each class to train on: a fraction if below 1, else a number of samples')
     parser.add_argument('--df_classid_classname', type=str, default='classid_classname.csv',
                         help='the df csv with classnames and class ids, root/classid_classname.csv')
     # video: each csv row is a clip, `dir` a list of frame paths or an mp4 name
@@ -147,8 +147,7 @@ def add_data_args(parser):
     parser.add_argument('--n_frames', type=int, default=16, help='frames sampled per clip')
     parser.add_argument('--temporal_subsample', type=str, default='uniform',
                         choices=('uniform', 'center', 'random', 'stride', 'segment'),
-                        help='uniform over the clip, a centered or random contiguous chunk, a fixed stride, or one frame per '
-                             'equal segment (random in training, the centre otherwise)')
+                        help='uniform, a centered or random chunk, a fixed stride, or one frame per segment')
     parser.add_argument('--temporal_stride', type=int, default=2,
                         help='stride for --temporal_subsample stride; short clips repeat their last frame')
     return parser
@@ -241,17 +240,14 @@ def add_vit_args(parser):
                         help='temporal position embedding of the temporal head and the joint merge')
     parser.add_argument('--temporal_depth', type=int, default=1, help='temporal: blocks in the temporal head')
     parser.add_argument('--merge_depth', type=int, default=0,
-                        help='joint: blocks before this index run per frame and take the temporal adapters '
-                             '(frame2freq*, st_adapter, aim), the rest run on all frames')
+                        help='joint: blocks before this index run per frame, the rest on all frames')
     parser.add_argument('--video_cls', type=str, default='mean',
                         choices=('mean', 'concat', 'video', 'video_mean'),
-                        help='joint: head input from the frame class tokens (mean or concat), a video '
-                             'token, or the video token with the mean of the frame tokens')
+                        help='joint: head input from the frame class tokens, a video token, or both')
     parser.add_argument('--head_dropout', type=float, default=0.0,
-                        help='joint: dropout on the pooled video feature before the classifier, as Frame2Freq')
+                        help='joint: dropout before the classifier')
     parser.add_argument('--qk_lora', type=int, default=0,
-                        help='rank of zero-init LoRA on the attention query and key projections (0: off); '
-                             'joint: in the blocks from --merge_depth on, temporal: in every block')
+                        help='rank of zero-init lora on query and key (0: off); joint: from --merge_depth on')
     return parser
 
 
@@ -260,8 +256,8 @@ def add_fgir_args(parser):
     parser.add_argument('--freeze_backbone', action='store_true')
 
     parser.add_argument('--adapter', type=str, default=None,
-                        help='adapter module inside transformer blocks; frame2freq_ms/frame2freq_st (_og: the release\'s defects): '
-                             'Frame2Freq temporal adapters for video ViTs; st_adapter: ST-Adapter; aim: AIM')
+                        help='adapter module inside transformer blocks; temporal: frame2freq_ms, frame2freq_st '
+                             '(_og: as released), st_adapter, aim')
     parser.add_argument('--adapter_dim', type=int, default=8,
                         help='adapter module inside transformer blocks')
     parser.add_argument('--adapter_kernel_size', type=int, default=3,
@@ -269,10 +265,9 @@ def add_fgir_args(parser):
     parser.add_argument('--adapter_path', type=str, default='convpass')
     parser.add_argument('--adapter_init', type=str, default='xavier', choices=('xavier', 'zero'))
     parser.add_argument('--adapter_scale', type=float, default=1.0,
-                        help='AdaptFormer scalar; negative => learnable init abs(value); aim: MLP adapter scale')
+                        help='adaptformer scale, learnable from abs(value) if negative; aim: mlp adapter scale')
     parser.add_argument('--adapter_pre_attn', action='store_true',
-                        help='frame2freq, st_adapter: a second adapter before MHSA in every block; '
-                             'aim: an adapter before the temporal MHSA')
+                        help='frame2freq, st_adapter: second adapter before mhsa; aim: before temporal mhsa')
 
     parser.add_argument('--unfreeze_cls', action='store_false')
     parser.add_argument('--unfreeze_positional_embedding', action='store_true')
@@ -310,7 +305,7 @@ def add_augmentation_args(parser):
     parser.add_argument('--auto_aug', action='store_true', help='Auto augmentation used')
     parser.add_argument('--rand_aug', action='store_true', help='RandAugment augmentation used')
     parser.add_argument('--rand_aug_timm', type=str, default=None,
-                        help='timm RandAugment per video clip on full frames before the crop, e.g. rand-m7-n4-mstd0.5-inc1')
+                        help='timm randaugment per clip before the crop, e.g. rand-m7-n4-mstd0.5-inc1')
     parser.add_argument('--trivial_aug', action='store_true', help='use trivialaugmentwide')
     # color and distortion
     parser.add_argument('--jitter_prob', type=float, default=0.0,
@@ -409,7 +404,7 @@ def parse_train_args(ret_parser=False):
     parser = add_vit_args(parser)
     parser = add_fgir_args(parser)
     parser.add_argument("--cfg", type=str, nargs='+',
-                        help='one or more yaml configs, merged left to right; command-line options win')
+                        help='yaml configs merged left to right; command line wins')
 
     if ret_parser:
         return parser
