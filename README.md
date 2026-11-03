@@ -164,7 +164,8 @@ Each run writes its window predictions to `results_train/<run name>/ind_preds.cs
 ## Acknowledgements
 
 The code is built on FGIR-ViT by the PCS Lab, National Yang Ming Chiao Tung University, and on
-[timm](https://github.com/huggingface/pytorch-image-models/). Experiments were tracked with
+[timm](https://github.com/huggingface/pytorch-image-models/). The paper's runs used FGIR-ViT tags `wacv27w-wastevision`
+(9aae68d, the submission) and `wacv27w-wastevision-cr` (e63d3b6, the camera-ready runs). Experiments were tracked with
 [Weights and Biases](https://wandb.ai/).
 
 
