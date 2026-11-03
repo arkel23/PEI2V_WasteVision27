@@ -1,10 +1,8 @@
 import torch
 from torch import nn
 
-# Frame2Freq temporal adapters (arXiv:2602.18977, github.com/th-nesh/Frame2Freq). *_og: outputs equal to the
-# release's, which scrambles channels before the spectral convs (view, not permute) and pairs a center=False STFT
-# with a center=True iSTFT; without _og: per-channel spectral convs and a consistent STFT pair.
-# Input is (b t) n d with a clip's frames contiguous; prefix tokens pass through.
+# Frame2Freq temporal adapters (arXiv:2602.18977, github.com/th-nesh/Frame2Freq)
+# _og: outputs equal to the release's (channels mixed by a view, center=False stft with center=True istft)
 
 
 def split_prefix(x):
@@ -14,8 +12,7 @@ def split_prefix(x):
 
 
 class Frame2FreqMS(nn.Module):
-    # down, half the channels: depthwise temporal conv, half: rfft over windows -> depthwise conv -> irfft
-    # (averaged over windows), concat, up
+    # down, temporal conv on half the channels and multi-scale spectral conv on the rest, up
     def __init__(self, dim, adapter_dim, n_frames, kernel_size=(3, 1, 1), og=False):
         super().__init__()
         self.n_frames = n_frames
@@ -34,20 +31,25 @@ class Frame2FreqMS(nn.Module):
         self.init_weights()
 
     def init_weights(self):
-        # the release's init: torch's default weights, zero biases; also called after the backbones reset every Linear
+        # zero biases; also called by the backbone's init
         for m in (self.fc1, self.fc2, self.temporal_conv, self.freq_conv):
             m.reset_parameters()
             nn.init.zeros_(m.bias)
 
     def forward(self, x):
         prefix, patches, h = split_prefix(x)
-        t, cf = self.n_frames, self.cf
+        t = self.n_frames
+        cf = self.cf
         z = self.fc1(patches)
         z = z.view(-1, t, h, h, z.shape[-1])
         b = z.shape[0]
-        zt, zf = z[..., :self.ct], z[..., self.ct:]
+        zt = z[..., :self.ct]
+        zf = z[..., self.ct:]
 
+        # temporal branch
         zt = self.temporal_conv(zt.permute(0, 4, 1, 2, 3)).permute(0, 2, 3, 4, 1)
+
+        # spectral branch, averaged over window sizes
 
         out_f = torch.zeros_like(zf)
         for w in self.windows:
@@ -59,11 +61,13 @@ class Frame2FreqMS(nn.Module):
                 spec = self.freq_conv(spec.view(b * chunks, 2 * cf, freqs, h, h))
                 spec = spec.view(b, chunks, freqs, h, h, cf, 2)
             else:
-                # (b chunks freq h w cf 2) -> (b chunks) (cf 2) freq h w: real and imaginary parts per channel
+                # real and imaginary parts per channel
                 spec = spec.permute(0, 1, 5, 6, 2, 3, 4).reshape(b * chunks, 2 * cf, freqs, h, h)
-                spec = self.freq_conv(spec).view(b, chunks, cf, 2, freqs, h, h).permute(0, 1, 4, 5, 6, 2, 3)
+                spec = self.freq_conv(spec)
+                spec = spec.view(b, chunks, cf, 2, freqs, h, h).permute(0, 1, 4, 5, 6, 2, 3)
             spec = torch.complex(spec[..., 0], spec[..., 1])
-            out_f = out_f + torch.fft.irfft(spec, n=w, dim=2).reshape(b, t, h, h, cf)
+            out_w = torch.fft.irfft(spec, n=w, dim=2).reshape(b, t, h, h, cf)
+            out_f = out_f + out_w
         out_f = out_f / len(self.windows)
 
         z = torch.cat([zt, out_f], dim=-1).reshape(b * t, h * h, -1)
@@ -71,8 +75,7 @@ class Frame2FreqMS(nn.Module):
 
 
 class Frame2FreqST(nn.Module):
-    # down, STFT over frames per channel and position, two zero-init depthwise convs
-    # (freq; freq x time) summed, iSTFT, up: the identity at init
+    # down, stft over frames, two zero-init depthwise convs, istft, up; identity at init
     def __init__(self, dim, adapter_dim, n_frames, og=False):
         super().__init__()
         self.n_frames = n_frames
@@ -92,7 +95,7 @@ class Frame2FreqST(nn.Module):
         self.init_weights()
 
     def init_weights(self):
-        # the release's init: torch's default linear weights, zero convs and biases (the identity)
+        # zero convs and biases
         self.fc1.reset_parameters()
         self.fc2.reset_parameters()
         for p in (self.fc1.bias, self.fc2.bias, self.conv_temporal.weight, self.conv_temporal.bias,
@@ -110,7 +113,8 @@ class Frame2FreqST(nn.Module):
 
         window = torch.hann_window(self.n_fft, device=z.device, dtype=z.dtype)
         series = z.permute(0, 2, 3, 4, 1).reshape(-1, t)
-        if not self.og:  # center=True's reflection pad, done here: CUDA's pad kernel rejects more than 65,535 rows
+        # center=True's reflection pad by hand: cuda's pad kernel takes at most 65,535 rows
+        if not self.og:
             p = self.n_fft // 2
             series = torch.cat([series[:, 1:p + 1].flip(-1), series, series[:, -p - 1:-1].flip(-1)], -1)
         spec = torch.stft(series, n_fft=self.n_fft, hop_length=self.hop, window=window,
@@ -123,12 +127,14 @@ class Frame2FreqST(nn.Module):
             spec = spec.permute(0, 2, 3, 1, 4).contiguous()[..., 0].view(bhw, freqs, steps, ca, 2)
             spec = torch.complex(spec[..., 0], spec[..., 1]).permute(0, 3, 1, 2)
         else:
-            # (bhw ca freq steps 2) -> bhw (ca 2) freq steps: real and imaginary parts per channel
+            # real and imaginary parts per channel
             spec = spec.permute(0, 1, 4, 2, 3).reshape(bhw, 2 * ca, freqs, steps, 1)
-            spec = (self.conv_temporal(spec) + self.conv_cross(spec))[..., 0].view(bhw, ca, 2, freqs, steps)
+            spec = self.conv_temporal(spec) + self.conv_cross(spec)
+            spec = spec[..., 0].view(bhw, ca, 2, freqs, steps)
             spec = torch.complex(spec[:, :, 0], spec[:, :, 1])
-        # center=True in both: the release's iSTFT keeps torch's default after a center=False STFT
-        y = torch.istft(spec.reshape(-1, freqs, steps), n_fft=self.n_fft, hop_length=self.hop, window=window, length=t)
+        # istft with center=True in both
+        spec = spec.reshape(-1, freqs, steps)
+        y = torch.istft(spec, n_fft=self.n_fft, hop_length=self.hop, window=window, length=t)
         y = y.view(b, h, h, ca, t).permute(0, 4, 1, 2, 3).reshape(b * t, h * h, ca)
         return torch.cat([prefix, patches + self.fc2(y)], dim=1)
 

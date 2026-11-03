@@ -5,8 +5,7 @@ from torch import nn
 
 
 class Adapter(nn.Module):
-    """Multi-Headed Dot Product Attention"""
-    def __init__(self, adapter, dim, adapter_dim, kernel_size, adapter_init='xavier', adapter_scale=1.0):  # , seq_len=197, attn_mask=False):
+    def __init__(self, adapter, dim, adapter_dim, kernel_size, adapter_init='xavier', adapter_scale=1.0):
         super().__init__()
 
         self.adapter_down = nn.Linear(dim, adapter_dim)
@@ -15,10 +14,10 @@ class Adapter(nn.Module):
 
         if adapter == 'convpass':
             padding = kernel_size // 2
-            # conv with kernel size 3, stride 1, padding=1
             self.adapter_conv = nn.Conv2d(adapter_dim, adapter_dim, kernel_size, 1, padding)
 
         self.adapter_init = adapter_init
+        # negative: learnable scale
         if adapter_scale >= 0:
             self.register_buffer('adapter_scale', torch.tensor(float(adapter_scale)))
         else:
@@ -62,7 +61,7 @@ class Adapter(nn.Module):
             else:
                 x = rearrange(x, 'b (h w) d -> b d h w', h=h)
                 x = self.adapter_conv(x)
-                x = rearrange(x, 'b d h w -> b (h w) d')                
+                x = rearrange(x, 'b d h w -> b (h w) d')
                 x = self.act(x)
 
         x = self.adapter_up(x)

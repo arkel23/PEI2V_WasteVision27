@@ -13,7 +13,7 @@ def sincos_1d(n, dim, temperature=10000):
 
 
 class TemporalConv(nn.Module):
-    # conditional position: x + zero-init depthwise conv over time (dim 1), zero padding marks the clip ends
+    # conditional position: zero-init depthwise conv over time
     def __init__(self, dim, kernel_size=3):
         super().__init__()
         self.conv = nn.Conv1d(dim, dim, kernel_size, padding=kernel_size // 2, groups=dim)
@@ -23,19 +23,20 @@ class TemporalConv(nn.Module):
     def forward(self, x):
         y = x.movedim(1, -2)
         shape = y.shape
-        y = self.conv(y.reshape(-1, shape[-2], shape[-1]).transpose(1, 2)).transpose(1, 2)
+        y = y.reshape(-1, shape[-2], shape[-1])
+        y = self.conv(y.transpose(1, 2)).transpose(1, 2)
         return x + y.reshape(shape).movedim(-2, 1)
 
 
 def temporal_embedding(module, kind, shape, learned_init):
-    # learned: a parameter (learned_init sets its start; learned_zero starts at 0); sincos: fixed;
-    # none and tconv: zeros, tconv adding a TemporalConv after it
+    # learned (learned_zero: zero init), fixed sincos, or zeros (none, tconv)
     if kind in ('learned', 'learned_zero'):
         module.temporal_embedding = nn.Parameter(torch.zeros(shape))
         if kind == 'learned':
             learned_init(module.temporal_embedding)
     elif kind == 'sincos':
-        module.register_buffer('temporal_embedding', sincos_1d(shape[1], shape[-1]).reshape(shape), persistent=False)
+        embedding = sincos_1d(shape[1], shape[-1]).reshape(shape)
+        module.register_buffer('temporal_embedding', embedding, persistent=False)
     else:
         module.register_buffer('temporal_embedding', torch.zeros(shape), persistent=False)
     module.temporal_conv = TemporalConv(shape[-1]) if kind == 'tconv' else nn.Identity()
@@ -47,27 +48,29 @@ def block(dim):
 
 
 class TemporalHead(nn.Module):
-    # depth pre-norm ViT blocks over per-frame features, per-frame logits averaged
+    # pre-norm ViT blocks over frames, frame logits averaged
     def __init__(self, dim, temporal_dim, n_frames, num_classes, embedding='learned', depth=1):
         super().__init__()
         temporal_dim = temporal_dim or dim
         assert temporal_dim % 8 == 0, f'--temporal_dim {temporal_dim} must be divisible by 8 attention heads'
         self.proj = nn.Linear(dim, temporal_dim) if temporal_dim != dim else nn.Identity()
-        temporal_embedding(self, embedding, (1, n_frames, temporal_dim), lambda p: nn.init.trunc_normal_(p, std=0.02))
+        temporal_embedding(self, embedding, (1, n_frames, temporal_dim),
+                           lambda p: nn.init.trunc_normal_(p, std=0.02))
         self.encoder = block(temporal_dim)
         self.encoder_rest = nn.ModuleList([block(temporal_dim) for _ in range(depth - 1)])
         self.norm = nn.LayerNorm(temporal_dim, eps=1e-6)
         self.classifier = nn.Linear(temporal_dim, num_classes)
 
     def forward(self, x):
-        x, _, _ = self.encoder(self.temporal_conv(self.proj(x) + self.temporal_embedding))
+        x = self.temporal_conv(self.proj(x) + self.temporal_embedding)
+        x, _, _ = self.encoder(x)
         for encoder in self.encoder_rest:
             x, _, _ = encoder(x)
         return self.classifier(self.norm(x)).mean(dim=1)
 
 
 class FrameMerge(nn.Module):
-    # (b t) n d -> b (t n) d, each frame's tokens shifted by a temporal embedding (learned: zero-init)
+    # frames merged into one sequence with a temporal embedding
     def __init__(self, dim, n_frames, video_token, embedding='learned'):
         super().__init__()
         self.n_frames = n_frames
@@ -76,20 +79,24 @@ class FrameMerge(nn.Module):
             self.video_token = nn.Parameter(torch.zeros(1, 1, dim))
 
     def forward(self, x):
-        x = self.temporal_conv(rearrange(x, '(b t) n d -> b t n d', t=self.n_frames) + self.temporal_embedding)
+        x = rearrange(x, '(b t) n d -> b t n d', t=self.n_frames)
+        x = self.temporal_conv(x + self.temporal_embedding)
         self.frame_len = x.shape[2]
         x = rearrange(x, 'b t n d -> b (t n) d')
         if hasattr(self, 'video_token'):
-            x = torch.cat([repeat(self.video_token, '1 1 d -> b 1 d', b=x.shape[0]), x], dim=1)
+            video_token = repeat(self.video_token, '1 1 d -> b 1 d', b=x.shape[0])
+            x = torch.cat([video_token, x], dim=1)
         return x
 
 
 class QKLoRA(nn.Module):
-    # zero-init low-rank updates (A: kaiming, B: zeros) of an attention's query and key projections
+    # zero-init lora of the query and key projections
     def __init__(self, dim, rank):
         super().__init__()
-        self.q_a, self.k_a = nn.Linear(dim, rank, bias=False), nn.Linear(dim, rank, bias=False)
-        self.q_b, self.k_b = nn.Linear(rank, dim, bias=False), nn.Linear(rank, dim, bias=False)
+        self.q_a = nn.Linear(dim, rank, bias=False)
+        self.k_a = nn.Linear(dim, rank, bias=False)
+        self.q_b = nn.Linear(rank, dim, bias=False)
+        self.k_b = nn.Linear(rank, dim, bias=False)
         nn.init.zeros_(self.q_b.weight)
         nn.init.zeros_(self.k_b.weight)
 
@@ -100,15 +107,13 @@ class QKLoRA(nn.Module):
         return output + self.k_b(self.k_a(inputs[0]))
 
     def add_qk(self, module, inputs, output):
-        # fused qkv: q, k, v are the thirds of the last dim
+        # fused qkv
         q, k, v = output.chunk(3, dim=-1)
         return torch.cat([self.add_q(module, inputs, q), self.add_k(module, inputs, k), v], dim=-1)
 
 
 class VideoModel(nn.Module):
-    """Image ViT on clips (b c t h w). temporal: per-frame backbone + TemporalHead.
-    joint: blocks before merge_depth run per frame (with any temporal adapter), the rest on the frames' tokens
-    as one sequence."""
+    # temporal: per-frame backbone and temporal head; joint: frames merged at merge_depth
     def __init__(self, args, backbone):
         super().__init__()
         self.backbone = backbone
@@ -116,16 +121,18 @@ class VideoModel(nn.Module):
         vit = backbone.model
         assert hasattr(vit, 'blocks') or hasattr(vit, 'encoder'), 'video models need a ViT backbone'
 
-        # the backbone returns every token: drop its pooling and classifier
+        # backbone returns every token
         if hasattr(vit, 'reset_classifier'):
             use_cls = vit.global_pool == 'token'
             assert not args.video_model == 'joint' or vit.num_prefix_tokens == 1, \
                 'joint needs exactly one prefix (class) token'
-            dim, blocks = vit.embed_dim, vit.blocks
+            dim = vit.embed_dim
+            blocks = vit.blocks
             vit.reset_classifier(0, '')
         else:
             use_cls = 'cls' in self.cfg.classifier
-            dim, blocks = self.cfg.hidden_size, vit.encoder.blocks
+            dim = self.cfg.hidden_size
+            blocks = vit.encoder.blocks
             del vit.head
         n_frames = args.n_frames
 
@@ -172,12 +179,14 @@ class VideoModel(nn.Module):
 
     def forward_temporal(self, clips, targets=None):
         b = clips.shape[0]
-        x = self.backbone(rearrange(clips, 'b c t h w -> (b t) c h w'))
-        x = rearrange(self.frame_features(x), '(b t) d -> b t d', b=b)
+        frames = rearrange(clips, 'b c t h w -> (b t) c h w')
+        x = self.frame_features(self.backbone(frames))
+        x = rearrange(x, '(b t) d -> b t d', b=b)
         return self.head(x)
 
     def forward_joint(self, clips, targets=None):
-        x = self.backbone(rearrange(clips, 'b c t h w -> (b t) c h w'))
+        frames = rearrange(clips, 'b c t h w -> (b t) c h w')
+        x = self.backbone(frames)
         if self.merge_at_end:
             x = self.aggregator(x)
 

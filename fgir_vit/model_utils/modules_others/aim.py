@@ -1,11 +1,10 @@
 from torch import nn
 
-# AIM adapters (arXiv:2302.03024, github.com/taoyang1122/adapt-image-models), outputs equal to the release's.
-# The block runs them around its frozen MHSA and MLP; every token, the class token included, is adapted.
+# AIM adapters (arXiv:2302.03024, github.com/taoyang1122/adapt-image-models), outputs equal to the release's
 
 
 class AIMAdapter(nn.Module):
-    # fc1 -> GELU -> fc2, zero-init fc2; skip adds the input
+    # bottleneck mlp, zero-init fc2
     def __init__(self, dim, adapter_dim, skip=True):
         super().__init__()
         self.skip = skip
@@ -15,7 +14,7 @@ class AIMAdapter(nn.Module):
         self.init_weights()
 
     def init_weights(self):
-        # also called by the backbones' init after they reset every Linear
+        # also called by the backbone's init
         nn.init.trunc_normal_(self.fc1.weight, std=.02)
         nn.init.zeros_(self.fc1.bias)
         nn.init.zeros_(self.fc2.weight)
@@ -27,8 +26,7 @@ class AIMAdapter(nn.Module):
 
 
 class AIM(nn.Module):
-    # t: on the MHSA output over each token's frames (t_in before it with pre_attn); s: on the MHSA output
-    # over each frame's tokens; mlp: parallel to the MLP, times scale
+    # temporal, spatial and mlp adapters
     def __init__(self, dim, adapter_dim, n_frames, scale, pre_attn=False):
         super().__init__()
         self.n_frames = n_frames

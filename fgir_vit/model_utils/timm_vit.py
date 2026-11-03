@@ -176,13 +176,13 @@ class Block(nn.Module):
         self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         if str(adapter).startswith('frame2freq'):
-            # sequential on each clip's frames: after MHSA, and also before it with adapter_pre_attn
+            # after mhsa, and before it with adapter_pre_attn
             from .modules_others.frame2freq import build_frame2freq
             self.adapter_f2f = build_frame2freq(adapter, dim, adapter_dim, n_frames)
             if adapter_pre_attn:
                 self.adapter_f2f_attn = build_frame2freq(adapter, dim, adapter_dim, n_frames)
         elif adapter == 'st_adapter':
-            # before the MLP, and also before MHSA with adapter_pre_attn
+            # before the mlp, and before mhsa with adapter_pre_attn
             from .modules_others.st_adapter import STAdapter
             kernel_size = (adapter_kernel_size, 1, 1)
             self.adapter_st = STAdapter(dim, adapter_dim, n_frames, kernel_size)
@@ -232,12 +232,15 @@ class Block(nn.Module):
         return x
 
     def forward_aim(self, x: torch.Tensor) -> torch.Tensor:
-        # the frozen MHSA over each token's frames, then over each frame's tokens; drop path on the t and mlp adapters
-        aim, n = self.adapter_aim, x.shape[1]
+        aim = self.adapter_aim
+        n = x.shape[1]
+        # temporal attention
         xt = rearrange(x, '(b t) n d -> (b n) t d', t=aim.n_frames)
         xt = aim.t(self.ls1(self.attn(aim.t_in(self.norm1(xt)))))
         x = x + self.drop_path1(rearrange(xt, '(b n) t d -> (b t) n d', n=n))
+        # spatial attention
         x = x + aim.s(self.ls1(self.attn(self.norm1(x))))
+        # mlp
         xn = self.norm2(x)
         return x + self.ls2(self.mlp(xn)) + self.drop_path2(aim.scale * aim.mlp(xn))
 
@@ -394,7 +397,7 @@ class PEViT(nn.Module):
             )
             for i in range(depth)])
         if adapter == 'aim':
-            # AIM's zero-init temporal embedding, added to every token of a frame before norm_pre
+            # aim: zero-init temporal embedding
             self.adapter_temporal_embedding = nn.Parameter(torch.zeros(1, n_frames, 1, embed_dim))
         self.norm = norm_layer(embed_dim) if not use_fc_norm else nn.Identity()
 
@@ -557,7 +560,9 @@ class PEViT(nn.Module):
 
         x = self._pos_embed(x)
         if hasattr(self, 'adapter_temporal_embedding'):
-            x = (x.unflatten(0, (-1, self.adapter_temporal_embedding.shape[1])) + self.adapter_temporal_embedding).flatten(0, 1)
+            x = x.unflatten(0, (-1, self.adapter_temporal_embedding.shape[1]))
+            x = x + self.adapter_temporal_embedding
+            x = x.flatten(0, 1)
         x = self.patch_drop(x)
         x = self.norm_pre(x)
 
