@@ -10,7 +10,7 @@ paper:
 Backbones: ViT-B/16 pretrained on ImageNet-21k (`pevit_base_patch16_224.orig_in21k`), CLIP LAION-2B
 (`pevit_base_patch16_clip_224.laion2b`), DeiT-3 (`pedeit3_base_patch16_224.fb_in22k_ft_in1k`) and MAE
 (`pevit_base_patch16_224.mae`). Methods: frozen backbone, full fine-tuning, AdaptFormer, ST-Adapter, AIM and
-Frame2Freq.
+Frame2Freq-MS.
 
 
 ## Install
@@ -76,19 +76,20 @@ wandb.
 
 ### Per-Step Spotter, end to end
 
-One backbone-method pair: CLIP backbone with AdaptFormer, seed 0, fold 0. `--loc_fold k` holds out fold k (serial ten + k + 1);
+One backbone-method pair: CLIP backbone with AdaptFormer, seed 0, fold 0. Each configuration has a base serial ending
+in 0, its ten; this one is ten 100100. `--loc_fold k` holds out fold k (serial ten + k + 1);
 `--loc_fold -1` trains on all training videos and scores the public test set (serial ten + 6). Seeds 1 and 2 pass
 `--seed 1` or `--seed 2` with the tens 100240 and 100250. The other methods replace the `--cfg ... --adapter_dim 32`
 flags with:
 
 | Method | Flags |
 |---|---|
-| Frozen | `--cfg configs/iwdd_ft.yaml --freeze_backbone` |
+| Frozen backbone | `--cfg configs/iwdd_ft.yaml --freeze_backbone` |
 | Full fine-tuning | `--cfg configs/iwdd_ft.yaml` |
 | AdaptFormer | `--cfg configs/iwdd_ft.yaml configs/methods/adapter_adaptformer.yaml --adapter_dim 32` |
 | ST-Adapter | `--cfg configs/iwdd_ft.yaml --freeze_backbone --adapter st_adapter --adapter_dim 384` |
 | AIM | `--cfg configs/iwdd_ft.yaml --freeze_backbone --adapter aim --adapter_dim 192 --adapter_scale 0.5 --sd 0.2` |
-| Frame2Freq | `--cfg configs/iwdd_ft.yaml --freeze_backbone --adapter frame2freq_ms --adapter_dim 192` |
+| Frame2Freq-MS | `--cfg configs/iwdd_ft.yaml --freeze_backbone --adapter frame2freq_ms --adapter_dim 192` |
 
 The backbones are `--model_name pevit_base_patch16_224.orig_in21k`, `pevit_base_patch16_clip_224.laion2b`,
 `pedeit3_base_patch16_224.fb_in22k_ft_in1k` and `pevit_base_patch16_224.mae`; only CLIP takes
