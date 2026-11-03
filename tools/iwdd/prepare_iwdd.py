@@ -59,7 +59,7 @@ def assign_folds(df):
 
 
 def windows(df):
-    # a window of a positive video is labelled dumping when it ends at or after the onset
+    # a window of a positive video is labeled dumping when it ends at or after the onset
     rows = []
     for video in df.to_dict('records'):
         frames = video['dir']

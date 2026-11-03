@@ -159,7 +159,7 @@ def add_optim_scheduler_args(parser):
     parser.add_argument('--opt', default='sgd', type=str,
                         help='Optimizer (default: "adamw"')
     parser.add_argument('--base_lr', type=float, default=None,
-                        help='base_lr if using scaling lr (lr = base_lr * bs/256')
+                        help='base_lr if using scaling lr (lr = base_lr * effective batch size / 8)')
     parser.add_argument('--lr', type=float, default=0.01,
                         help='learning rate (default: 5e-4)')
     parser.add_argument('--opt_eps', default=1e-8, type=float,

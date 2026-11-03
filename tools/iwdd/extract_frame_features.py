@@ -1,5 +1,6 @@
 # Frozen per-frame features of every IWDD video: class token and mean patch token of a timm ViT, at fps frames per second.
 # Usage: python tools/iwdd/extract_frame_features.py <iwdd_root> <timm_model> <out.npz> [fps] (GPU if available).
+import ast
 import os
 import sys
 
@@ -22,8 +23,8 @@ transform = v2.Compose([v2.Resize(cfg['input_size'][1:]), v2.ToDtype(torch.float
 videos = pd.concat([pd.read_csv(os.path.join(root, f)) for f in ('train_val.csv', 'test.csv')])
 features = {}
 with torch.inference_mode(), torch.autocast('cuda', torch.float16, enabled=device == 'cuda'):
-    for i, (video_id, n_frames, split) in enumerate(zip(videos['video_id'], videos['n_frames'], videos['dir'])):
-        folder = os.path.dirname(eval(split)[0][0])
+    for i, (video_id, n_frames, frame_dirs) in enumerate(zip(videos['video_id'], videos['n_frames'], videos['dir'])):
+        folder = os.path.dirname(ast.literal_eval(frame_dirs)[0][0])
         idx = np.unique(np.round(np.arange(0, (n_frames - 1) / 5 + 1e-6, 1 / fps) * 5).astype(int))
         frames = [os.path.join(root, folder, f'{k + 1:05d}.jpg') for k in idx]
         clip = torch.stack([transform(v2.functional.pil_to_tensor(Image.open(f).convert('RGB'))) for f in frames])

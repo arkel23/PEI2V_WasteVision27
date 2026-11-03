@@ -66,6 +66,5 @@ class Adapter(nn.Module):
                 x = self.act(x)
 
         x = self.adapter_up(x)
-        if isinstance(self.adapter_scale, nn.Parameter) or float(self.adapter_scale) != 1.0:
-            x = x * self.adapter_scale
+        x = x * self.adapter_scale
         return x

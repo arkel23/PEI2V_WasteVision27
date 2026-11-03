@@ -2,6 +2,7 @@
 # flags; or precomputed frozen features) and their change from the video's first 2 s feed a temporal head
 # that scores every step against [onset - 3 s, onset + 10 s]; the video score is the maximum step score.
 # Usage: python -m tools.iwdd.train_loc --cfg configs/iwdd_ft.yaml <backbone flags> --loc_out <csv> [--loc_fold k] (GPU).
+import ast
 import os
 import time
 
@@ -17,6 +18,7 @@ import wandb
 from fgir_vit.other_utils.build_args import parse_train_args, adjust_config, add_adjust_common_dependent
 from fgir_vit.data_utils.build_transform import get_mean_std
 from fgir_vit.model_utils.build_model import build_model
+from fgir_vit.model_utils.misc.configs import TEMPORAL_ADAPTERS
 from fgir_vit.train_utils.misc_utils import set_random_seed
 from tools.train import adjust_args_general
 
@@ -35,9 +37,10 @@ def parse_args():
     parser.add_argument('--loc_head', type=str, default='transformer', choices=['transformer', 'conv'])
     parser.add_argument('--loc_depth', type=int, default=1, help='transformer blocks or residual convolutions')
     parser.add_argument('--loc_features', type=str, default=None, help='npz of frozen per-frame features: no backbone')
-    parser.add_argument('--loc_accum', type=int, default=8, help='videos per optimiser step when training the backbone')
+    parser.add_argument('--loc_accum', type=int, default=8, help='videos per optimizer step when training the backbone')
     parser.add_argument('--loc_backbone_lr', type=float, default=1e-5, help='lr of pretrained backbone weights that train')
     args = parser.parse_args()
+    assert args.n_frames == CHUNK or args.adapter not in TEMPORAL_ADAPTERS, '--n_frames must be 32 with a temporal adapter'
     adjust_config(parser, args)
     args.video, args.video_model, args.num_classes = 'frames', 'temporal', 1
     return adjust_args_general(add_adjust_common_dependent(args))
@@ -101,7 +104,7 @@ class Detector(nn.Module):
 
 def frame_paths(root, row, fps):
     # the 5 fps frame nearest to each 1/fps step
-    folder = os.path.dirname(eval(row['dir'])[0][0])
+    folder = os.path.dirname(ast.literal_eval(row['dir'])[0][0])
     idx = np.unique(np.round(np.arange(0, (row['n_frames'] - 1) / DISK_FPS + 1e-6, 1 / fps) * DISK_FPS).astype(int))
     return [os.path.join(root, folder, f'{k + 1:05d}.jpg') for k in idx]
 
@@ -171,7 +174,7 @@ def main():
     train_tf = v2.Compose([v2.Resize(size), v2.RandomHorizontalFlip(), v2.ToDtype(torch.float32, scale=True), v2.Normalize(mean, std)])
     eval_tf = v2.Compose([v2.Resize(size), v2.ToDtype(torch.float32, scale=True), v2.Normalize(mean, std)])
 
-    feat_dim = next(iter(features.values())).reshape(-1, 2 * 768).shape[1] if features is not None else None
+    feat_dim = int(np.prod(next(iter(features.values())).shape[1:])) if features is not None else None
     model = Detector(args, feat_dim).to(args.device)
     pretrained = [p for p in (model.backbone.parameters() if model.backbone is not None else []) if p.requires_grad]
     # new modules (head, adapters) at --lr; pretrained weights, when they train, at --loc_backbone_lr

@@ -18,7 +18,7 @@ from fgir_vit.train_utils.calc_loss import OverallLoss
 
 def adjust_args_general(args):
     classifier = f'_{args.classifier}' if args.classifier else ''
-    if args.adapter and getattr(args, 'adapter_init', 'xavier') == 'zero' and getattr(args, 'adapter_scale', 1.0) != 1.0:
+    if args.adapter and args.adapter_init == 'zero' and args.adapter_scale != 1.0:
         adapter = '_adaptformer'
     else:
         adapter = f'_{args.adapter}' if args.adapter else ''

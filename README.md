@@ -76,7 +76,7 @@ wandb.
 
 ### Per-Step Spotter, end to end
 
-One grid cell: CLIP backbone with AdaptFormer, seed 0, fold 0. `--loc_fold k` holds out fold k (serial ten + k + 1);
+One backbone-method pair: CLIP backbone with AdaptFormer, seed 0, fold 0. `--loc_fold k` holds out fold k (serial ten + k + 1);
 `--loc_fold -1` trains on all training videos and scores the public test set (serial ten + 6). Seeds 1 and 2 pass
 `--seed 1` or `--seed 2` with the tens 100240 and 100250. The other methods replace the `--cfg ... --adapter_dim 32`
 flags with:
@@ -106,7 +106,7 @@ The output CSV holds one score per 0.5 s step: `split, seed, video_id, t, score`
 
 ### Input study
 
-The frozen CLIP cell at other frame rates and image sizes: `--loc_fps 1` (ten 100110), `--loc_fps 3` (100120),
+The frozen CLIP backbone at other frame rates and image sizes: `--loc_fps 1` (ten 100110), `--loc_fps 3` (100120),
 `--image_size 160` (100130) and `--image_size 288` (100140), seed 0. Fold 0 at 1 fps:
 
 ```bash
